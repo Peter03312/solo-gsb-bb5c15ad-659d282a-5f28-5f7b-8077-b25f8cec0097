@@ -200,6 +200,16 @@ table.measure.compact th, table.measure.compact td { padding: 4px 6px; }
   border-radius: 7px; padding: 7px 9px; font: inherit; width: 110px;
 }
 .contact-threshold:focus { outline: none; border-color: var(--accent); }
+
+/* 视野网格密度分析 */
+.grid-table-wrap {
+  max-height: 280px; overflow: auto; margin-top: 6px;
+  border: 1px solid var(--line); border-radius: 7px;
+}
+.grid-table-wrap table.measure { border: none; }
+#rp-grid-result tr[data-grid-index] { cursor: pointer; }
+#rp-grid-result tr[data-grid-index]:hover td { background: rgba(0,229,255,.05); }
+#rp-grid-result tr.grid-row-active td { background: rgba(0,229,255,.12) !important; }
 .cluster-list { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
 .cluster-row {
   border: 1px solid var(--line); border-radius: 7px;

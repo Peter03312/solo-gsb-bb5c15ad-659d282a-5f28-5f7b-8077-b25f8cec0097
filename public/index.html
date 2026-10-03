@@ -343,6 +343,28 @@
           <div id="rp-coverage-result"></div>
         </div>
         <div class="panel">
+          <h3>视野网格密度分析（发布时冻结）</h3>
+          <p class="hint">选择<b>本报告内一个视野</b>并给定<b>行数 × 列数（各 1～40）</b>：把视野外接矩形
+            等分为网格，每格有效面积为格子与视野净区域（扣除孔洞）的<b>几何交集</b>，零面积格保留且密度标为
+            「不可计算」；计入该视野的细胞按<b>净区域质心</b>分配到唯一格子（质心落内部网格线归右/下侧，
+            落最外边线归末格），各格计数合计等于原视野统计。结果只读取<b>发布时冻结数据</b>，
+            后续草稿修改或报告更正不改变本报告结果；查询为只读，不写回报告。</p>
+          <div class="toolbar wrap">
+            <input type="text" id="rp-grid-field-id" class="contact-threshold"
+                   placeholder="视野 id 或视野名称" list="rp-grid-field-options" />
+            <datalist id="rp-grid-field-options"></datalist>
+          </div>
+          <div class="toolbar wrap">
+            <input type="number" id="rp-grid-rows" class="contact-threshold"
+                   min="1" max="40" step="1" value="4" placeholder="行数" />
+            <input type="number" id="rp-grid-cols" class="contact-threshold"
+                   min="1" max="40" step="1" value="4" placeholder="列数" />
+            <button id="rp-grid-run" class="primary small">分析网格密度</button>
+            <button id="rp-grid-clear" class="small hidden">清除网格</button>
+          </div>
+          <div id="rp-grid-result"></div>
+        </div>
+        <div class="panel">
           <h3>接触簇分析（间距阈值）</h3>
           <p class="hint">输入<b>间距阈值（微米，允许 0）</b>，按发布时<b>冻结的轮廓与定标</b>计算：
             距离取两个细胞<b>外轮廓扣除孔洞后的净区域</b>最短间距——区域重叠或边界接触时为 0；

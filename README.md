@@ -10,7 +10,10 @@
 对已发布报告还可基于**同一切片的当前草稿**发起**更正**：生成新的不可变报告与图片快照、
 记录更正原因并串成**更正链**，列表展示每条链的当前有效报告、原因与历史，历史报告按原标识永久可查；
 还可在报告详情输入**间距阈值（μm，允许 0）**做**细胞接触簇分析**：按冻结轮廓与定标计算
-细胞两两**净区域最短间距**、阈值内邻居与**连通簇**，并在报告快照上**高亮**所选簇。
+细胞两两**净区域最短间距**、阈值内邻居与**连通簇**，并在报告快照上**高亮**所选簇；
+并可对报告内**单个取样视野**做**网格密度分析**：把视野外接矩形等分为 **行×列（各 1～40）** 网格，
+按格子与视野净区域的**几何交集**给出每格有效面积、按净区域质心把计入该视野的细胞分配到唯一格子，
+输出各格**细胞数与每 mm² 密度**（零面积格标「不可计算」）并在冻结快照上叠加网格。
 
 - 技术栈：Node.js（Express）+ SQLite（better-sqlite3）+ 原生 Canvas 前端
 - 图片与数据**全部本地保存**（无任何外部服务依赖）：
@@ -175,10 +178,24 @@
     - 校验：**相同报告**、**不同切片**、**报告不存在**（基线/复测分别 400/404）、
       **基线视野不存在**（400）、**视野名称歧义**（重名，400，提示改用 id；id 始终优先精确匹配）
       均明确报错；查询**完全只读**，不写回任何报告，**草稿后续修改或再发更正都不改变旧报告核对结果**。
+17. **报告单视野网格密度分析（行×列网格，只读）**：在报告详情页选择**本报告冻结的一个视野**，
+    输入**行数 × 列数（各 1～40 的整数）**，把**视野外接矩形**等分为网格，查看视野内的细胞空间密度分布。
+    - 每格**有效面积**为格子矩形与视野净区域（外环扣除孔洞）的**几何交集**，用平面排列
+      （与合并统计/覆盖核对同一实现）精确计算；**零面积格保留**在结果中，其密度标为
+      **「不可计算」**；各格有效面积之和等于视野净面积（结果含合计校验值）；
+    - 细胞归属**沿用现有净区域质心规则**：只有质心严格落在该视野净区域内的细胞才参与分配，
+      且每个计入细胞只进入质心所在的**唯一格子**；质心落在**内部网格线上归右侧/下侧**格子，
+      落在**最外边线归末格**；**各格计数合计恒等于原视野统计的细胞数**（结果同时给出两者）；
+    - 结果含每格的**像素有效面积 (px²)**、**物理有效面积 (mm²)**、**细胞数**、
+      **每 mm² 密度**，以及视野净面积、各格面积/计数合计；报告快照上叠加**青色网格线、
+      按密度着色的格子、计入细胞的净区域质心点**，点击结果表格行可在快照上定位该格；
+    - 只读取报告**发布时冻结**的视野/细胞/标尺：**草稿后续修改或报告更正都不改变旧报告结果**；
+      查询**只读**，不写回报告；**报告不存在 → 404**；**视野标识为空/不存在/重名 → 400**；
+      **行/列数缺失、非整数或越出 1～40 → 400**。
 
 ## 配置项
 
-本轮（单视野覆盖核对 / 两报告覆盖变化核对）**未引入新的环境变量、外部依赖或表结构变更**：核对均为只读实时计算，
+本轮（报告单视野网格密度分析）**未引入新的环境变量、外部依赖或表结构变更**：分析为只读实时计算，
 不写库。此前各轮的幂等迁移（`fields`、`corrects_report_id`、`correction_reason` 列）
 在旧数据库启动时自动完成、无需手工变更。沿用既有配置：
 
@@ -287,6 +304,13 @@ npm start
       确认后携带读取时版本提交；若期间草稿被改动会提示版本过期并自动刷新时间线，
       重新选择修订后再恢复；成功后草稿版本与时间线新增一条恢复记录、原历史保留，
       测量与视野统计按恢复的标尺重算，已发布报告与更正链不受影响。
+16. 需要查看单个视野内的细胞空间密度分布时，打开**报告详情**，在「**视野网格密度分析
+    （发布时冻结）**」面板选择视野（id 或名称）、输入**行数 × 列数（各 1～40）**后点
+    **分析网格密度**：面板列出每格有效面积（px²/mm²）、细胞数与每 mm² 密度
+    （零面积格标「不可计算」），各格计数合计与原视野统计一并给出；
+    右侧报告快照上叠加青色网格线、按密度着色的格子与计入细胞的质心点，
+    点击结果表格中的某一行可在快照上定位该格（再点一次取消），「清除网格」移除叠加。
+    结果只读取发布时冻结数据，草稿修改或报告更正都不改变本报告结果。
 
 ## 目录结构
 
@@ -296,7 +320,7 @@ npm start
 ├── docker-compose.yml
 ├── package.json
 ├── server/
-│   ├── index.js       # Express API：上传/定标/轮廓/视野/发布/导出/报告比较/细胞迁移/接触簇/修订时间线与恢复
+│   ├── index.js       # Express API：上传/定标/轮廓/视野/发布/导出/报告比较/细胞迁移/接触簇/修订时间线与恢复/网格密度分析
 │   ├── db.js          # SQLite 表结构与初始化（启动自动建表 + 旧库幂等补列）
 │   ├── geometry.js    # 几何校验、面积/周长、净区域质心（服务端最终校验）
 │   ├── fields.js      # 取样视野：质心归属、mm²/密度统计、未定标“待定标”
@@ -307,6 +331,7 @@ npm start
 │   ├── transfer.js    # 细胞迁移：三点对应点校验、仿射求解、整批映射+逐细胞校验
 │   ├── clusters.js    # 接触簇：阈值校验、净区域最短间距（含孔洞语义）、邻接对与连通簇
 │   ├── coverage-diff.js # 同切片两报告 · 单视野覆盖变化四类划分（平面排列，只读）
+│   ├── field-grid.js  # 报告单视野网格密度分析：外接矩形等分、格子∩净区域有效面积、质心归格（只读）
 │   ├── render.js      # sharp + SVG 渲染标注 PNG
 │   └── exporter.js    # CSV（测量/汇总/视野统计/比较）与 ZIP 导出
 ├── public/            # 前端（原生 JS，无需构建）
@@ -321,6 +346,8 @@ npm start
 ├── test-contacts-api.js # 接触簇端到端 HTTP 自测（npm test，临时目录起服务）
 ├── test-revisions-api.js # 草稿修订时间线/恢复端到端 HTTP 自测（npm test，临时目录起服务）
 ├── test-coverage-diff-api.js # 两报告覆盖变化核对端到端 HTTP 自测（npm test，临时目录起服务）
+├── test-field-grid.js # 视野网格密度分析纯逻辑自测（npm test）
+├── test-field-grid-api.js # 视野网格密度分析端到端 HTTP 自测（npm test，临时目录起服务）
 └── data/              # 运行后生成：app.db、images/、snapshots/
 ```
 
@@ -1163,6 +1190,139 @@ console.log(`合计 ${body.diff.sumAreaPx} px² = 视野净面积 ${body.diff.fi
 页面入口：顶部导航 **覆盖变化核对**（`#/coverage-diff`），勾选两个报告与基线视野后
 「核对覆盖变化」，结果表格下方即在基线快照上叠加四类可切换区域与边界。
 
+## 报告单视野网格密度分析 HTTP 接口（行×列网格，只读）
+
+对一份**已发布报告**冻结的**单个取样视野**做网格密度分析：把**视野外接矩形**等分为
+`rows × cols` 个格子（**各 1～40 的整数**），返回每格有效面积、细胞数与每 mm² 密度，
+以及可在报告冻结快照上叠加的网格几何。只读取报告**发布时冻结**的视野/细胞/标尺：
+草稿后续修改、重新定标或报告更正都**不改变**旧报告的分析结果；查询**只读**，不写回报告。
+
+| 方法与路径 | 说明 |
+| --- | --- |
+| `POST /api/reports/:id/field-grid` | 请求体 `{ "fieldId": "<视野 id 或名称>", "rows": 4, "cols": 4 }`。报告不存在 → 404；视野标识为空/不存在/重名 → 400；行/列数缺失、非整数或越出 1～40 → 400 |
+
+**面积与计数语义**：
+
+- 每格**有效面积** = 格子矩形与视野净区域（外环扣除孔洞）的**几何交集**（平面排列精确计算）；
+  **零面积格保留**在结果中（`zeroArea: true`），其密度为 `null`、展示文本为 **「不可计算」**；
+  各格有效面积之和等于视野净面积（`sumAreaPx` 与 `fieldAreaPx` 给出校验值）；
+- 细胞归属**沿用现有视野统计的净区域质心规则**：只有质心严格落在该视野净区域内的细胞
+  才参与分配（与报告 `fieldStats` 中该视野的 `cellCount` 同一口径），每个计入细胞只进入
+  质心所在的**唯一格子**；质心落在**内部网格线上归右侧/下侧**格子，落在**最外边线归末格**；
+  **各格计数合计恒等于原视野统计**（`sumCellCount` 与 `fieldCellCount` 给出对照）；
+- 密度 = 格内细胞数 / 格子有效面积（mm²），按报告**冻结标尺**换算；
+  有面积但无细胞的格子密度为 0（可计算）。
+
+成功响应示例（节选；2×2 网格、视野含一个孔洞）：
+
+```json
+{
+  "scope": "report",
+  "reportId": "rep-1",
+  "title": "切片A 报告",
+  "draftVersion": 4,
+  "calibrated": true,
+  "scaleUmPerPx": 1,
+  "matchedBy": "id",
+  "snapshotUrl": "/api/reports/rep-1/file",
+  "grid": {
+    "kind": "field-grid",
+    "fieldId": "fieldF", "fieldName": "中心视野", "fieldHoles": 1,
+    "rows": 2, "cols": 2,
+    "bounds": { "minX": 0, "minY": 0, "maxX": 100, "maxY": 100 },
+    "cellWidthPx": 50, "cellHeightPx": 50,
+    "fieldAreaPx": 9900, "fieldAreaMm2": 0.0099, "fieldAreaText": "0.0099",
+    "fieldCellCount": 3, "sumCellCount": 3, "sumAreaPx": 9900,
+    "cells": [
+      { "row": 0, "col": 0, "index": 0,
+        "rect": { "x0": 0, "y0": 0, "x1": 50, "y1": 50 },
+        "areaPx": 2500, "areaMm2": 0.0025, "areaText": "0.0025",
+        "zeroArea": false, "cellCount": 1, "countedCellKeys": ["cellA"],
+        "densityPerMm2": 400, "densityText": "400" },
+      { "row": 1, "col": 1, "index": 3,
+        "rect": { "x0": 50, "y0": 50, "x1": 100, "y1": 100 },
+        "areaPx": 2400, "areaMm2": 0.0024, "areaText": "0.0024",
+        "zeroArea": false, "cellCount": 1, "countedCellKeys": ["cellC"],
+        "densityPerMm2": 416.6667, "densityText": "416.6667" }
+    ],
+    "overlay": {
+      "verticalLines": [0, 50, 100],
+      "horizontalLines": [0, 50, 100],
+      "centroids": [
+        { "key": "cellA", "x": 20, "y": 20, "row": 0, "col": 0 },
+        { "key": "cellB", "x": 45, "y": 50, "row": 1, "col": 0 }
+      ]
+    },
+    "calibrated": true
+  }
+}
+```
+
+- `cells` 按行优先顺序给出全部 `rows × cols` 个格子（含零面积格）；
+  `index = row × cols + col`（均 0 基）；`rect` 为格子像素矩形；
+- `overlay.verticalLines` / `horizontalLines` 为含最外边线的全部网格线坐标（各 rows+1 / cols+1 条），
+  `overlay.centroids` 为计入细胞的净区域质心及其所在格子，可直接画在 `snapshotUrl` 返回的冻结图片上；
+- 细胞标识 `key` 为细胞 `id`（历史无 id 数据为 `#序号`，与视野统计/比较同一约定）。
+
+curl 示例（`RID` 为报告标识）：
+
+```bash
+# 取报告冻结的视野 id
+curl -s http://localhost:8080/api/reports/$RID | jq '.fields[] | {id, name}'
+
+# 2×2 网格密度分析（按视野 id）
+curl -s -X POST http://localhost:8080/api/reports/$RID/field-grid \
+  -H 'Content-Type: application/json' \
+  -d '{"fieldId":"fieldF","rows":2,"cols":2}' \
+  | jq '.grid | {sumCellCount, fieldCellCount, sumAreaPx, fieldAreaPx,
+                 cells: [.cells[] | {row, col, areaPx, cellCount, densityText}]}'
+
+# 按视野名称、10×5 网格
+curl -s -X POST http://localhost:8080/api/reports/$RID/field-grid \
+  -H 'Content-Type: application/json' \
+  -d '{"fieldId":"中心视野","rows":10,"cols":5}'
+
+# 行列数越界 / 视野不存在 → 400；报告不存在 → 404
+curl -s -X POST http://localhost:8080/api/reports/$RID/field-grid \
+  -H 'Content-Type: application/json' -d '{"fieldId":"fieldF","rows":0,"cols":2}'
+# -> { "error": "网格密度分析请求无效：rows（行数） 超出范围，必须在 1～40 之间（收到 0），请求被拒绝" }
+```
+
+Node.js 示例（无第三方依赖）：
+
+```js
+const base = 'http://localhost:8080';
+
+async function fieldGrid(reportId, fieldId, rows, cols) {
+  const res = await fetch(`${base}/api/reports/${reportId}/field-grid`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fieldId, rows, cols })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const e = new Error(body.error || `HTTP ${res.status}`);
+    e.status = res.status; // 400：视野标识/行列数非法；404：报告不存在
+    throw e;
+  }
+  const g = body.grid;
+  console.log(`视野 ${g.fieldName}：${g.rows}×${g.cols} 网格，` +
+              `计数合计 ${g.sumCellCount}＝原统计 ${g.fieldCellCount}，` +
+              `面积合计 ${g.sumAreaPx} px²＝净面积 ${g.fieldAreaPx} px²`);
+  for (const c of g.cells) {
+    console.log(`第${c.row + 1}行第${c.col + 1}列：${c.areaPx} px² / ` +
+                `${c.areaText} mm²，细胞 ${c.cellCount}，密度 ${c.densityText} 个/mm²`);
+  }
+  return body;
+}
+
+await fieldGrid(process.env.RID, 'fieldF', 4, 4);
+```
+
+页面入口：报告详情页「**视野网格密度分析（发布时冻结）**」面板——选择视野、输入行×列数后
+「分析网格密度」，结果表格下方即在报告快照上叠加网格、密度着色与计入细胞质心点，
+点击表格行可在快照上定位该格。
+
 ## 全部 HTTP 接口一览（既有 + 本轮）
 
 | 方法与路径 | 说明 |
@@ -1188,6 +1348,7 @@ console.log(`合计 ${body.diff.sumAreaPx} px² = 视野净面积 ${body.diff.fi
 | **`POST /api/reports/:id/field-merge`** | **报告内多视野合并统计（只读，只取发布时冻结数据；不足两个/重复/不存在 400）** |
 | **`POST /api/reports/:id/field-coverage`** | **报告内单视野细胞覆盖核对（只读，几何交集；只取发布时冻结数据；视野标识为空/不存在/不属于该报告 400，报告不存在 404）** |
 | **`POST /api/reports/:id/contacts`** | **细胞接触簇分析（只读）：`{thresholdUm}`（μm，允许 0）→ 阈值内邻居/最短净区域间距/连通簇；阈值负数或非有限数 400，报告不存在 404** |
+| **`POST /api/reports/:id/field-grid`** | **报告单视野网格密度分析（只读）：`{fieldId, rows, cols}`（行列各 1～40）→ 视野外接矩形等分网格，每格有效面积（px²/mm²，格子∩净区域）、细胞数、每 mm² 密度（零面积格「不可计算」）与网格叠加几何；计数合计＝原视野统计；视野标识为空/不存在/重名或行列数越界 400，报告不存在 404；草稿修改或更正不影响旧报告** |
 | **`POST /api/reports/field-coverage-diff`** | **同切片两报告单视野覆盖变化核对（只读）：`{baselineReportId, retestReportId, fieldId}` → 共同/仅复测/仅基线/始终未覆盖四类像素面积、占比、按基线标尺的 mm² 与可叠加区域/边界几何；相同报告/不同切片/视野不存在或重名 400，报告不存在 404；草稿修改或更正不影响旧报告** |
 | `GET /api/reports/:id/file` / `/png` | 发布时图片快照 / 标注 PNG |
 | `GET /api/reports/:id/csv` | 测量 CSV（μm²，原义不变） |

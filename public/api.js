@@ -123,6 +123,14 @@ const API = {
       body: JSON.stringify({ thresholdUm })
     }));
   },
+  // 单视野网格密度分析：报告冻结视野 × 行×列网格（只读，不写回报告）
+  async reportFieldGrid(reportId, payload) {
+    return jsonOrThrow(await fetch(`/api/reports/${reportId}/field-grid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }));
+  },
   async listReports() {
     return jsonOrThrow(await fetch('/api/reports'));
   },

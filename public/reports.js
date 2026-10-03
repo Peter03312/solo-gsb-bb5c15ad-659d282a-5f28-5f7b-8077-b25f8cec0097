@@ -22,6 +22,11 @@ const Reports = {
   contactClusterId: null, // 当前选中（高亮）的簇 id
   contactHighlight: null, // Set<cellKey>，画布高亮用
 
+  // 视野网格密度分析状态（只读查询，只使用发布时冻结数据）
+  gridReportId: null,
+  gridResult: null,        // 最近一次网格密度分析结果（含 grid 对象）
+  gridSelectedIndex: null, // 当前在结果表格中选中的格子 index（画布高亮用）
+
   async showList() {
     document.getElementById('view-reports').classList.remove('hidden');
     await this.refresh();
@@ -279,6 +284,32 @@ const Reports = {
     document.getElementById('rp-contact-run').onclick = () => this.runContactAnalysis();
     document.getElementById('rp-contact-clear').onclick = () => this.clearContactHighlight();
 
+    // 视野网格密度分析：只读查询，只用发布时冻结数据；切换报告时重置
+    this.gridReportId = r.id;
+    this.gridResult = null;
+    this.gridSelectedIndex = null;
+    const gridInput = document.getElementById('rp-grid-field-id');
+    if (gridInput) gridInput.value = '';
+    const gridOptions = document.getElementById('rp-grid-field-options');
+    if (gridOptions) {
+      gridOptions.innerHTML = (r.fields || []).map((f, i) => {
+        const name = f.name || `视野 ${i + 1}`;
+        return `<option value="${this.esc(f.id)}">${this.esc(name)}</option>`;
+      }).join('');
+    }
+    document.getElementById('rp-grid-result').innerHTML =
+      (r.fields || []).length
+        ? '<p class="hint">选择视野并给定行×列数（各 1～40）后点「分析网格密度」。</p>'
+        : '<p class="hint">本报告发布时未圈定取样视野，无法做网格密度分析。</p>';
+    document.getElementById('rp-grid-clear').classList.add('hidden');
+    document.getElementById('rp-grid-run').onclick = () => this.runGridAnalysis();
+    document.getElementById('rp-grid-clear').onclick = () => this.clearGridOverlay();
+    if (gridInput) {
+      gridInput.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); this.runGridAnalysis(); }
+      };
+    }
+
     document.getElementById('rp-png-link').href = API.exportPngUrl(r.id);
     document.getElementById('rp-png-link').setAttribute('download', `${r.id}_annotated.png`);
     document.getElementById('rp-csv-link').href = API.exportCsvUrl(r.id);
@@ -294,7 +325,9 @@ const Reports = {
     }
     this.detailView.bindState(() => ({
       cells: r.cells, fields: r.fields || [], calib: r.calib,
-      activeCellId: null, highlightCellIds: this.contactHighlight
+      activeCellId: null, highlightCellIds: this.contactHighlight,
+      gridOverlay: this.gridResult ? this.gridResult.grid : null,
+      gridSelectedIndex: this.gridSelectedIndex
     }));
     await this.detailView.loadImage(`/api/reports/${r.id}/file`, r.width, r.height);
     this.detailView.readOnly = true;
@@ -314,6 +347,9 @@ const Reports = {
     this.contactClusterId = null;
     this.contactHighlight = null;
     this.coverageReportId = null;
+    this.gridReportId = null;
+    this.gridResult = null;
+    this.gridSelectedIndex = null;
   },
 
   esc(s) {
@@ -595,6 +631,96 @@ const Reports = {
       有交集的细胞 ${s.contributingCellCount} 个：${this.esc(contributing) || '（无）'}。
       结果只读取<b>发布时冻结数据</b>（发布时草稿 v${body.draftVersion}），
       后续草稿修改或报告更正均不改变本报告结果；本查询不写回报告。</p>`;
+  },
+
+  // ---------- 视野网格密度分析（发布时冻结；只读 HTTP，不写回报告） ----------
+
+  async runGridAnalysis() {
+    if (!this.gridReportId) return;
+    const resEl = document.getElementById('rp-grid-result');
+    const fieldId = document.getElementById('rp-grid-field-id').value.trim();
+    if (!fieldId) {
+      resEl.innerHTML = '<p class="merge-error">请输入视野 id 或视野名称。</p>';
+      return;
+    }
+    // 行/列数合法性由服务端最终判定（非整数或越出 1～40 → 400）
+    const rows = Number(document.getElementById('rp-grid-rows').value);
+    const cols = Number(document.getElementById('rp-grid-cols').value);
+    resEl.innerHTML = '<p class="hint">计算中…</p>';
+    try {
+      const body = await API.reportFieldGrid(this.gridReportId, { fieldId, rows, cols });
+      if (body.reportId !== this.gridReportId) return; // 期间已切换报告
+      this.gridResult = body;
+      this.gridSelectedIndex = null;
+      this.renderGridResult();
+    } catch (e) {
+      // 400：视野标识为空/不存在/重名、行列数越界；404：报告不存在。不写回任何数据
+      this.gridResult = null;
+      this.gridSelectedIndex = null;
+      resEl.innerHTML = `<p class="merge-error">${this.esc(e.message)}</p>`;
+    }
+    document.getElementById('rp-grid-clear').classList.toggle('hidden', !this.gridResult);
+    if (this.detailView) this.detailView.render();
+  },
+
+  renderGridResult() {
+    const resEl = document.getElementById('rp-grid-result');
+    const body = this.gridResult;
+    if (!body) return;
+    const g = body.grid;
+    const rowsHtml = g.cells.map((cell) => {
+      const active = this.gridSelectedIndex === cell.index ? ' class="grid-row-active"' : '';
+      const dens = cell.zeroArea
+        ? `<span style="color:var(--warn)">${this.esc(cell.densityText)}</span>`
+        : this.esc(cell.densityText);
+      return `<tr data-grid-index="${cell.index}"${active}>` +
+        `<td>第${cell.row + 1}行 第${cell.col + 1}列</td>` +
+        `<td>${this.fmtPx(cell.areaPx)}</td>` +
+        `<td>${this.esc(cell.areaText)}</td>` +
+        `<td>${cell.cellCount}</td>` +
+        `<td>${dens}</td></tr>`;
+    }).join('');
+    resEl.innerHTML = `
+      <table class="measure compact">
+        <tbody>
+          <tr><th>视野</th><td>${this.esc(g.fieldName || g.fieldId)}${body.matchedBy === 'name' ? '（按名称匹配）' : ''}</td></tr>
+          <tr><th>网格</th><td>${g.rows} 行 × ${g.cols} 列（每格约 ${this.fmtPx(g.cellWidthPx)} × ${this.fmtPx(g.cellHeightPx)} px）</td></tr>
+          <tr><th>视野净面积</th><td>${this.fmtPx(g.fieldAreaPx)} px² · ${this.esc(g.fieldAreaText)} mm²</td></tr>
+          <tr><th>各格有效面积合计</th><td>${this.fmtPx(g.sumAreaPx)} px²（＝视野净面积）</td></tr>
+          <tr><th>细胞计数校验</th><td>各格合计 ${g.sumCellCount} ＝ 原视野统计 ${g.fieldCellCount}</td></tr>
+        </tbody>
+      </table>
+      <div class="grid-table-wrap">
+        <table class="measure compact">
+          <thead><tr><th>格子</th><th>有效面积 px²</th><th>有效面积 mm²</th><th>细胞数</th><th>密度 个/mm²</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      <p class="hint">每格有效面积为格子与视野净区域（扣除孔洞）的几何交集；零面积格密度为「不可计算」。
+        快照上青色网格为等分线、品红点为计入细胞的净区域质心，格子亮度随密度增高；
+        点击表格行可在快照上定位该格（再点一次取消）。
+        结果只读取<b>发布时冻结数据</b>（发布时草稿 v${body.draftVersion}），
+        后续草稿修改或报告更正均不改变本报告结果；查询不写回报告。</p>`;
+    resEl.querySelectorAll('tr[data-grid-index]').forEach((tr) => {
+      tr.onclick = () => this.selectGridCell(Number(tr.dataset.gridIndex));
+    });
+  },
+
+  // 选中/取消某个格子：在报告快照画布上高亮该格
+  selectGridCell(index) {
+    if (!this.gridResult) return;
+    this.gridSelectedIndex = this.gridSelectedIndex === index ? null : index;
+    this.renderGridResult();
+    if (this.detailView) this.detailView.render();
+  },
+
+  clearGridOverlay() {
+    this.gridResult = null;
+    this.gridSelectedIndex = null;
+    document.getElementById('rp-grid-result').innerHTML =
+      '<p class="hint">选择视野并给定行×列数（各 1～40）后点「分析网格密度」。</p>';
+    document.getElementById('rp-grid-clear').classList.add('hidden');
+    if (this.detailView) this.detailView.render();
   },
 
   // ---------- 接触簇分析（发布时冻结；阈值仅影响本次查询，不写回报告） ----------

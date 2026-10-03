@@ -255,6 +255,9 @@ class CanvasView {
       });
     }
 
+    // 视野网格密度分析叠加（报告详情页；数据来自只读 HTTP 接口，与表格数值同源）
+    if (st.gridOverlay) this.drawGridOverlay(ctx, st.gridOverlay, st.gridSelectedIndex);
+
     // 正在绘制的环
     if (st.drawing) {
       const isHole = st.drawing.kind === 'hole' || st.drawing.kind === 'fieldhole';
@@ -326,6 +329,92 @@ class CanvasView {
       ctx.textAlign = 'start';
       ctx.textBaseline = 'alphabetic';
     });
+  }
+
+  // 视野网格密度分析叠加：按密度着色的格子填充 + 网格线 + 计入细胞质心点。
+  // grid 为 /api/reports/:id/field-grid 返回的 grid 对象（cells/overlay/bounds）。
+  drawGridOverlay(ctx, grid, selectedIndex) {
+    const cells = grid.cells || [];
+    // 密度归一化（零面积格不参与）
+    let maxD = 0;
+    for (const c of cells) {
+      if (!c.zeroArea && typeof c.densityPerMm2 === 'number' && c.densityPerMm2 > maxD) {
+        maxD = c.densityPerMm2;
+      }
+    }
+    // 格子填充：密度越高越亮；零面积格灰色
+    for (const c of cells) {
+      const r = c.rect;
+      if (!r) continue;
+      ctx.beginPath();
+      ctx.rect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+      if (c.zeroArea) {
+        ctx.fillStyle = 'rgba(158,158,158,0.30)';
+      } else if (maxD > 0) {
+        const t = (c.densityPerMm2 || 0) / maxD;
+        ctx.fillStyle = `rgba(0,229,255,${(0.05 + 0.30 * t).toFixed(3)})`;
+      } else {
+        ctx.fillStyle = 'rgba(0,229,255,0.08)';
+      }
+      ctx.fill();
+    }
+    // 格内细胞数标签：格子在屏幕上足够大时绘制
+    for (const c of cells) {
+      const r = c.rect;
+      if (!r) continue;
+      const wS = (r.x1 - r.x0) * this.k;
+      const hS = (r.y1 - r.y0) * this.k;
+      if (wS < 30 || hS < 18) continue;
+      const fs = 12 / this.k;
+      const cx = (r.x0 + r.x1) / 2;
+      const cy = (r.y0 + r.y1) / 2;
+      const label = String(c.cellCount);
+      ctx.font = `bold ${fs}px sans-serif`;
+      const tw = ctx.measureText(label).width;
+      ctx.fillStyle = 'rgba(16,32,39,0.72)';
+      ctx.fillRect(cx - tw / 2 - 3 / this.k, cy - fs / 2 - 2 / this.k, tw + 6 / this.k, fs + 4 / this.k);
+      ctx.fillStyle = c.zeroArea ? '#9e9e9e' : '#00e5ff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, cx, cy);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+    }
+    // 网格线（含最外边线）
+    const ov = grid.overlay || {};
+    const b = grid.bounds || {};
+    ctx.beginPath();
+    for (const x of ov.verticalLines || []) {
+      ctx.moveTo(x, b.minY);
+      ctx.lineTo(x, b.maxY);
+    }
+    for (const y of ov.horizontalLines || []) {
+      ctx.moveTo(b.minX, y);
+      ctx.lineTo(b.maxX, y);
+    }
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 1.4 / this.k;
+    ctx.stroke();
+    // 选中格高亮（点击结果表格行）
+    const sel = (selectedIndex != null && cells[selectedIndex]) ? cells[selectedIndex] : null;
+    if (sel && sel.rect) {
+      const r = sel.rect;
+      ctx.beginPath();
+      ctx.rect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+      ctx.strokeStyle = '#ff9f1c';
+      ctx.lineWidth = 3 / this.k;
+      ctx.stroke();
+    }
+    // 计入细胞的净区域质心（品红圆点）
+    for (const m of ov.centroids || []) {
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, 3.5 / this.k, 0, Math.PI * 2);
+      ctx.fillStyle = '#ff2fb3';
+      ctx.fill();
+      ctx.lineWidth = 1.2 / this.k;
+      ctx.strokeStyle = '#102027';
+      ctx.stroke();
+    }
   }
 
   drawPolygon(ctx, poly, opt) {

@@ -17,6 +17,7 @@ const corrections = require('./corrections');
 const clustersSvc = require('./clusters');
 const revisionsSvc = require('./revisions');
 const coverageDiffSvc = require('./coverage-diff');
+const fieldGridSvc = require('./field-grid');
 const { renderAnnotatedPng } = require('./render');
 const { buildReportCsv, buildCombinedCsv, buildComparisonCsv, buildFieldStatsCsv, streamZip } = require('./exporter');
 
@@ -781,6 +782,56 @@ app.post('/api/reports/:id/field-coverage', (req, res) => {
     calibrated: !!report.calib,
     matchedBy: resolved.matchBy,
     coverage
+  });
+});
+
+// ---------- 报告单视野网格密度分析（只读；只使用发布时冻结数据） ----------
+//
+// 请求体：{ fieldId, rows, cols }。fieldId 为视野 id 或名称（必须来自该报告冻结的 fields），
+// rows/cols 各为 1～40 的整数。把视野外接矩形等分为网格：每格有效面积为格子与视野净区域
+// （扣除孔洞）的几何交集，零面积格保留且密度标为「不可计算」；计入该视野的细胞按现有
+// 净区域质心归属规则分配到唯一格子（内部网格线归右/下侧，最外边线归末格），
+// 各格计数合计等于原视野统计。只取发布时冻结的视野/细胞/标尺：
+// 后续草稿修改或报告更正不改变旧报告结果；查询不写回任何数据。
+app.post('/api/reports/:id/field-grid', (req, res) => {
+  const report = getReportOr404(req.params.id);
+  if (!report) return res.status(404).json({ error: '报告不存在' });
+  const body = req.body || {};
+
+  let rows, cols;
+  try {
+    rows = fieldGridSvc.validateGridDimension(body.rows, 'rows（行数）');
+    cols = fieldGridSvc.validateGridDimension(body.cols, 'cols（列数）');
+  } catch (e) {
+    return res.status(e.status || 400).json({ error: e.message });
+  }
+
+  let resolved;
+  try {
+    resolved = fieldGridSvc.resolveGridField(report.fields, body.fieldId);
+  } catch (e) {
+    return res.status(e.status || 400).json({ error: e.message });
+  }
+
+  let grid;
+  try {
+    grid = fieldGridSvc.buildFieldGrid(
+      resolved.field, resolved.index, report.cells,
+      report.calib ? report.calib.scale : null, rows, cols);
+  } catch (e) {
+    return res.status(500).json({ error: `网格密度分析失败：${e.message}` });
+  }
+
+  res.json({
+    scope: 'report',
+    reportId: report.id,
+    title: report.title,
+    draftVersion: report.draftVersion,
+    calibrated: !!report.calib,
+    scaleUmPerPx: report.calib ? report.calib.scale : null,
+    matchedBy: resolved.matchBy,
+    snapshotUrl: `/api/reports/${report.id}/file`,
+    grid
   });
 });
 
