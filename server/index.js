@@ -17,6 +17,7 @@ const corrections = require('./corrections');
 const clustersSvc = require('./clusters');
 const revisionsSvc = require('./revisions');
 const coverageDiffSvc = require('./coverage-diff');
+const fieldGridSvc = require('./field-grid');
 const { renderAnnotatedPng } = require('./render');
 const { buildReportCsv, buildCombinedCsv, buildComparisonCsv, buildFieldStatsCsv, streamZip } = require('./exporter');
 
@@ -781,6 +782,51 @@ app.post('/api/reports/:id/field-coverage', (req, res) => {
     calibrated: !!report.calib,
     matchedBy: resolved.matchBy,
     coverage
+  });
+});
+
+// ---------- 报告内单视野网格空间密度（只读；只使用发布时冻结数据） ----------
+//
+// 请求体：{ fieldId: string, rows: number, cols: number }（行列各 1～40，数值字符串接受）。
+// 把该冻结视野外环外接矩形等分为 cols×rows 格，逐格给出与视野净区域（扣除孔洞）的
+// 交集有效面积（px²/mm²）、按既有净区域质心规则分配到该格的细胞数与每 mm² 密度；
+// 零面积格保留且密度标为“不可计算”，各格细胞数合计恒等于原冻结视野统计的细胞数。
+// 结果还含外接矩形与等分线（前端在报告冻结快照上叠加网格）。
+// 只用报告冻结标尺与标注：后续草稿修改或报告更正不改变旧报告结果；查询不写回任何数据。
+// 报告不存在 → 404；视野标识为空/不存在/重名、行列数越界或非整数 → 400。
+app.post('/api/reports/:id/field-grid', (req, res) => {
+  const report = getReportOr404(req.params.id);
+  if (!report) return res.status(404).json({ error: '报告不存在' });
+  const body = req.body || {};
+
+  let cols, rows, resolved;
+  try {
+    cols = fieldGridSvc.validateGridCount(body.cols, 'cols');
+    rows = fieldGridSvc.validateGridCount(body.rows, 'rows');
+    resolved = fieldGridSvc.resolveField(report.fields, body.fieldId);
+  } catch (e) {
+    return res.status(e.status || 400).json({ error: e.message });
+  }
+
+  let grid;
+  try {
+    grid = fieldGridSvc.buildFieldGrid(
+      resolved.field, resolved.index, report.cells,
+      report.calib ? report.calib.scale : null, cols, rows);
+  } catch (e) {
+    return res.status(500).json({ error: `网格密度计算失败：${e.message}` });
+  }
+
+  res.json({
+    scope: 'report',
+    reportId: report.id,
+    title: report.title,
+    draftVersion: report.draftVersion,
+    calibrated: !!report.calib,
+    scaleUmPerPx: report.calib ? report.calib.scale : null,
+    snapshotUrl: `/api/reports/${report.id}/file`,
+    matchedBy: resolved.matchBy,
+    grid
   });
 });
 

@@ -115,6 +115,14 @@ const API = {
       body: JSON.stringify({ fieldId })
     }));
   },
+  // 单视野网格空间密度：报告只读取发布时冻结数据（只读，不写回）
+  async reportFieldGrid(reportId, payload) {
+    return jsonOrThrow(await fetch(`/api/reports/${reportId}/field-grid`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }));
+  },
   // 细胞接触簇分析：报告冻结轮廓与定标 + 本次阈值（只读，不写回报告）
   async reportContacts(reportId, thresholdUm) {
     return jsonOrThrow(await fetch(`/api/reports/${reportId}/contacts`, {

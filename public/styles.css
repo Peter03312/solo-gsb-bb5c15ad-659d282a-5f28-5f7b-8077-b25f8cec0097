@@ -200,7 +200,25 @@ table.measure.compact th, table.measure.compact td { padding: 4px 6px; }
   border-radius: 7px; padding: 7px 9px; font: inherit; width: 110px;
 }
 .contact-threshold:focus { outline: none; border-color: var(--accent); }
-.cluster-list { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
+
+/* 单视野网格空间密度 */
+.grid-num-label { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--muted); }
+.grid-num { width: 76px; text-align: center; }
+.grid-table-wrap { max-height: 360px; overflow: auto; margin-top: 8px; border: 1px solid var(--line); border-radius: 7px; }
+table.grid-table { border-collapse: collapse; font-size: 12px; width: max-content; min-width: 100%; }
+table.grid-table th, table.grid-table td {
+  border: 1px solid var(--line); padding: 4px 8px; vertical-align: top; text-align: center;
+  min-width: 86px;
+}
+table.grid-table thead th { position: sticky; top: 0; background: var(--panel2); z-index: 1; }
+table.grid-table tbody th { position: sticky; left: 0; background: var(--panel2); z-index: 1; }
+.grid-count { display: block; font-size: 15px; font-weight: 700; color: #ff8fc4; }
+.grid-area { display: block; color: var(--muted); margin-top: 2px; line-height: 1.45; }
+.grid-area b { color: var(--text); font-weight: 600; }
+td.zero-area { background: rgba(255,255,255,.035); }
+td.zero-area .grid-count { color: var(--muted); }
+
+/* 接触簇分析 */
 .cluster-row {
   border: 1px solid var(--line); border-radius: 7px;
   padding: 5px 8px; background: var(--panel2); font-size: 12.5px; cursor: pointer;

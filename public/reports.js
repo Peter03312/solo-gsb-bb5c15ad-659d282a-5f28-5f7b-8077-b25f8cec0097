@@ -11,6 +11,11 @@ const Reports = {
   mergeSelected: [],   // 报告内多视野合并统计勾选（冻结视野 id）
   coverageReportId: null, // 覆盖核对当前报告 id（切换报告时清空结果）
 
+  // 单视野网格空间密度（只读查询；行列与结果仅影响本次查询）
+  gridReportId: null,
+  gridResult: null,   // 最近一次网格密度响应（含 grid.bounds，供画布叠加）
+  gridOverlayOn: false,
+
   // 更正工作状态
   trace: null,        // 当前详情报告的追溯视图
   draft: null,        // 同一切片的当前草稿
@@ -268,6 +273,32 @@ const Reports = {
       if (e.key === 'Enter') { e.preventDefault(); this.runCoverageQuery(); }
     };
 
+    // 单视野网格空间密度：只读 HTTP API，只用发布时冻结数据；切换报告时重置
+    this.gridReportId = r.id;
+    this.gridResult = null;
+    this.gridOverlayOn = false;
+    const gridInput = document.getElementById('rp-grid-field-id');
+    if (gridInput) gridInput.value = '';
+    const gridOptions = document.getElementById('rp-grid-field-options');
+    if (gridOptions) {
+      gridOptions.innerHTML = (r.fields || []).map((f, i) => {
+        const name = f.name || `视野 ${i + 1}`;
+        return `<option value="${this.esc(f.id)}">${this.esc(name)}</option>`;
+      }).join('');
+    }
+    document.getElementById('rp-grid-result').innerHTML =
+      (r.fields || []).length
+        ? '<p class="hint">选择视野、输入列数与行数后点「计算网格密度」。</p>'
+        : '<p class="hint">本报告发布时未圈定取样视野，无法计算网格密度。</p>';
+    const gridToggle = document.getElementById('rp-grid-toggle');
+    gridToggle.classList.add('hidden');
+    gridToggle.textContent = '隐藏网格叠加';
+    document.getElementById('rp-grid-run').onclick = () => this.runGridQuery();
+    document.getElementById('rp-grid-toggle').onclick = () => this.toggleGridOverlay();
+    gridInput.onkeydown = (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); this.runGridQuery(); }
+    };
+
     // 接触簇分析：只读查询，阈值仅影响本次结果；切换报告时重置
     this.contactReportId = r.id;
     this.contactResult = null;
@@ -294,7 +325,8 @@ const Reports = {
     }
     this.detailView.bindState(() => ({
       cells: r.cells, fields: r.fields || [], calib: r.calib,
-      activeCellId: null, highlightCellIds: this.contactHighlight
+      activeCellId: null, highlightCellIds: this.contactHighlight,
+      gridOverlay: this.gridOverlayOn && this.gridResult ? this.gridResult.grid : null
     }));
     await this.detailView.loadImage(`/api/reports/${r.id}/file`, r.width, r.height);
     this.detailView.readOnly = true;
@@ -314,6 +346,9 @@ const Reports = {
     this.contactClusterId = null;
     this.contactHighlight = null;
     this.coverageReportId = null;
+    this.gridReportId = null;
+    this.gridResult = null;
+    this.gridOverlayOn = false;
   },
 
   esc(s) {
@@ -595,6 +630,115 @@ const Reports = {
       有交集的细胞 ${s.contributingCellCount} 个：${this.esc(contributing) || '（无）'}。
       结果只读取<b>发布时冻结数据</b>（发布时草稿 v${body.draftVersion}），
       后续草稿修改或报告更正均不改变本报告结果；本查询不写回报告。</p>`;
+  },
+
+  // ---------- 单视野网格空间密度（发布时冻结；只读 HTTP） ----------
+
+  async runGridQuery() {
+    if (!this.gridReportId) return;
+    const resEl = document.getElementById('rp-grid-result');
+    const raw = document.getElementById('rp-grid-field-id').value.trim();
+    const cols = Number(document.getElementById('rp-grid-cols').value);
+    const rows = Number(document.getElementById('rp-grid-rows').value);
+    if (!raw) {
+      resEl.innerHTML = '<p class="merge-error">请选择视野 id 或视野名称。</p>';
+      return;
+    }
+    if (!Number.isInteger(cols) || cols < 1 || cols > 40 ||
+        !Number.isInteger(rows) || rows < 1 || rows > 40) {
+      resEl.innerHTML = '<p class="merge-error">列数与行数必须是 1～40 之间的整数。</p>';
+      return;
+    }
+    resEl.innerHTML = '<p class="hint">计算中…</p>';
+    try {
+      const body = await API.reportFieldGrid(this.gridReportId, { fieldId: raw, cols, rows });
+      if (body.reportId !== this.gridReportId) return; // 期间已切换报告
+      this.gridResult = body;
+      this.gridOverlayOn = true;
+      this.renderGridResult();
+      if (this.detailView) this.detailView.render();
+    } catch (e) {
+      // 400：行列越界/视野不存在/重名；404：报告不存在。不写回任何数据
+      this.gridResult = null;
+      this.gridOverlayOn = false;
+      document.getElementById('rp-grid-toggle').classList.add('hidden');
+      resEl.innerHTML = `<p class="merge-error">${this.esc(e.message)}</p>`;
+      if (this.detailView) this.detailView.render();
+    }
+  },
+
+  toggleGridOverlay() {
+    this.gridOverlayOn = !this.gridOverlayOn;
+    const btn = document.getElementById('rp-grid-toggle');
+    btn.textContent = this.gridOverlayOn ? '隐藏网格叠加' : '显示网格叠加';
+    if (this.detailView) this.detailView.render();
+  },
+
+  renderGridResult() {
+    const resEl = document.getElementById('rp-grid-result');
+    const toggleBtn = document.getElementById('rp-grid-toggle');
+    const body = this.gridResult;
+    const g = body.grid;
+
+    const nameMatch = body.matchedBy === 'name' ? '（按名称匹配）' : '';
+    const zeroWarn = g.zeroAreaCellCount
+      ? `<p class="hint">其中 <b>${g.zeroAreaCellCount}</b> 个格子与视野净区域没有正面积交集，已保留并把密度标为<b>「不可计算」</b>（细胞仍计入）。</p>`
+      : '';
+
+    // 行优先表格：行号自上而下，列号自左而右；零面积格整行淡化
+    let thead = '<tr><th>行 ＼ 列</th>';
+    for (let c = 1; c <= g.cols; c++) thead += `<th>${c}</th>`;
+    thead += '</tr>';
+    const bodyRows = [];
+    for (let r = 1; r <= g.rows; r++) {
+      let html = `<tr><th>${r}</th>`;
+      for (let c = 1; c <= g.cols; c++) {
+        const cell = g.cells[(r - 1) * g.cols + (c - 1)];
+        const cls = cell.computable ? 'grid-cell' : 'grid-cell zero-area';
+        const area = g.calibrated
+          ? `${this.fmtPx(cell.areaPx)} px²<br><b>${this.esc(cell.densityText)}</b> 个/mm²`
+          : `${this.fmtPx(cell.areaPx)} px²<br><b>${this.esc(cell.densityText)}</b>`;
+        html += `<td class="${cls}">` +
+          `<span class="grid-count">${cell.cellCount}</span>` +
+          `<span class="grid-area">${area}</span></td>`;
+      }
+      html += '</tr>';
+      bodyRows.push(html);
+    }
+
+    resEl.innerHTML = `
+      <table class="measure compact">
+        <tbody>
+          <tr><th>视野</th><td>${this.esc(g.fieldName || g.fieldId)}${nameMatch}（孔洞 ${g.fieldHoles} 个）</td></tr>
+          <tr><th>网格</th><td>${g.cols} 列 × ${g.rows} 行 = ${g.cellCountTotal} 格；
+            外接矩形 ${this.fmtPx(g.bounds.width)}×${this.fmtPx(g.bounds.height)} px
+            （x ${this.fmtPx(g.bounds.minX)}–${this.fmtPx(g.bounds.maxX)}，
+             y ${this.fmtPx(g.bounds.minY)}–${this.fmtPx(g.bounds.maxY)}）</td></tr>
+          <tr><th>视野净面积</th>
+            <td>${this.fmtPx(g.fieldAreaPx)} px² · ${this.esc(g.fieldAreaText)}${g.calibrated ? ' mm²' : ''}</td></tr>
+          <tr><th>各格有效面积合计</th>
+            <td>${this.fmtPx(g.totalAreaPx)} px² · ${this.esc(g.totalAreaText)}${g.calibrated ? ' mm²' : ''}</td></tr>
+          <tr><th>细胞数合计</th>
+            <td><b>${g.sumCellCount}</b> / 原冻结视野统计细胞数 <b>${g.cellCount}</b>
+              ${g.countMatchesFieldStats ? '✅ 一致' : '⚠ 不一致'}</td></tr>
+          <tr><th>全视野密度（对照）</th>
+            <td>${this.esc(g.fieldDensityText)}${g.calibrated ? ' 个/mm²' : ''}</td></tr>
+        </tbody>
+      </table>
+      ${zeroWarn}
+      <p class="hint">每格显示：<b>细胞数</b>、该格与视野净区域（扣除孔洞）交集的有效面积、
+      每 mm² 密度；质心落在内部网格线归右侧/下侧、最外边线归末格。
+      结果只读取<b>发布时冻结数据</b>（发布时草稿 v${body.draftVersion}，
+      1 px = ${body.scaleUmPerPx == null ? '—' : body.scaleUmPerPx} μm），
+      后续草稿修改或报告更正均不改变本报告结果；本查询不写回报告。</p>
+      <div class="grid-table-wrap">
+        <table class="grid-table measure compact">
+          <thead>${thead}</thead>
+          <tbody>${bodyRows.join('')}</tbody>
+        </table>
+      </div>`;
+    toggleBtn.classList.remove('hidden');
+    toggleBtn.textContent = this.gridOverlayOn ? '隐藏网格叠加' : '显示网格叠加';
   },
 
   // ---------- 接触簇分析（发布时冻结；阈值仅影响本次查询，不写回报告） ----------

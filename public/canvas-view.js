@@ -255,6 +255,10 @@ class CanvasView {
       });
     }
 
+    // 单视野网格密度叠加：外接矩形 + 等分线（bounds.linesX/linesY 为像素坐标）
+    const grid = st.gridOverlay;
+    if (grid && grid.bounds) this.drawGridOverlay(ctx, grid);
+
     // 正在绘制的环
     if (st.drawing) {
       const isHole = st.drawing.kind === 'hole' || st.drawing.kind === 'fieldhole';
@@ -389,6 +393,30 @@ class CanvasView {
     ctx.fillText(name, ax, ay - fs / 2 + 1 / this.k);
     ctx.textAlign = 'start';
     ctx.textBaseline = 'alphabetic';
+  }
+
+  // 单视野网格密度：在冻结快照上叠加视野外接矩形与行列等分线
+  drawGridOverlay(ctx, grid) {
+    const b = grid.bounds;
+    if (!b || !Array.isArray(b.linesX) || !Array.isArray(b.linesY)) return;
+    ctx.save();
+    ctx.strokeStyle = '#ff4fa3';
+    ctx.lineWidth = 1.4 / this.k;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    for (const x of b.linesX) {
+      ctx.moveTo(x, b.minY);
+      ctx.lineTo(x, b.maxY);
+    }
+    for (const y of b.linesY) {
+      ctx.moveTo(b.minX, y);
+      ctx.lineTo(b.maxX, y);
+    }
+    ctx.stroke();
+    // 外接矩形加粗描边，便于与等分线区分
+    ctx.lineWidth = 2.6 / this.k;
+    ctx.strokeRect(b.minX, b.minY, b.maxX - b.minX, b.maxY - b.minY);
+    ctx.restore();
   }
 
   drawDraftRing(ctx, pts, color) {
